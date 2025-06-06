@@ -8,6 +8,9 @@
 *.so
 *.dylib
 
+#compiled binary
+mcp-memory-server
+
 # Test binary, built with `go test -c`
 *.test
 
