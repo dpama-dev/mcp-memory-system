@@ -1,9 +1,12 @@
 package main
 
 import (
+	"container/heap"
 	"context"
+	"errors"
 	"fmt"
 	"math"
+	"strings"
 	"sync"
 	"time"
 )
@@ -48,6 +51,31 @@ type ScoredMemory struct {
 	Score  float32
 }
 
+// Keyword index for fast text search
+type KeywordIndex struct {
+	mu    sync.RWMutex
+	index map[string]map[string]*Memory // keyword -> memoryID -> Memory
+}
+
+// Priority queue for top-K similarity search
+type ScoredMemoryHeap []*ScoredMemory
+
+func (h ScoredMemoryHeap) Len() int           { return len(h) }
+func (h ScoredMemoryHeap) Less(i, j int) bool { return h[i].Score < h[j].Score }
+func (h ScoredMemoryHeap) Swap(i, j int)      { h[i], h[j] = h[j], h[i] }
+
+func (h *ScoredMemoryHeap) Push(x interface{}) {
+	*h = append(*h, x.(*ScoredMemory))
+}
+
+func (h *ScoredMemoryHeap) Pop() interface{} {
+	old := *h
+	n := len(old)
+	item := old[n-1]
+	*h = old[0 : n-1]
+	return item
+}
+
 // Main Memory Store
 type MemoryStore struct {
 	mu sync.RWMutex
@@ -59,6 +87,7 @@ type MemoryStore struct {
 	typeIndex      map[MemoryType]map[string]*Memory
 	timeIndex      *TimeIndex
 	embeddingIndex *EmbeddingIndex
+	keywordIndex   *KeywordIndex
 
 	// Relationship graph
 	relations map[string][]*MemoryRelation
@@ -66,6 +95,9 @@ type MemoryStore struct {
 	// Memory management
 	maxMemories   int
 	decayInterval time.Duration
+	shutdownChan  chan struct{}
+	ctx           context.Context
+	cancel        context.CancelFunc
 }
 
 // Time-based index for temporal queries
@@ -93,10 +125,15 @@ func NewMemoryStore(maxMemories int) *MemoryStore {
 		typeIndex:      make(map[MemoryType]map[string]*Memory),
 		timeIndex:      &TimeIndex{buckets: make(map[string][]*Memory)},
 		embeddingIndex: &EmbeddingIndex{embeddings: make(map[string][]float32), dimension: 384},
+		keywordIndex:   &KeywordIndex{index: make(map[string]map[string]*Memory)},
 		relations:      make(map[string][]*MemoryRelation),
 		maxMemories:    maxMemories,
 		decayInterval:  5 * time.Minute,
+		shutdownChan:   make(chan struct{}),
 	}
+
+	// Set up context for graceful shutdown
+	store.ctx, store.cancel = context.WithCancel(context.Background())
 
 	// Initialize type indexes
 	for _, t := range []MemoryType{ShortTerm, LongTerm, Episodic, Semantic, Procedural} {
@@ -110,10 +147,35 @@ func NewMemoryStore(maxMemories int) *MemoryStore {
 	return store
 }
 
-// Store a new memory
+// Shutdown gracefully stops all background processes
+func (ms *MemoryStore) Shutdown() {
+	ms.cancel()
+	close(ms.shutdownChan)
+}
+
+// Store a new memory with validation
 func (ms *MemoryStore) Store(memory *Memory) error {
+	// Validate input
+	if memory == nil {
+		return errors.New("memory cannot be nil")
+	}
+	if memory.ID == "" {
+		return errors.New("memory ID cannot be empty")
+	}
+	if memory.Content == "" {
+		return errors.New("memory content cannot be empty")
+	}
+	if memory.Importance < 0 || memory.Importance > 1 {
+		return errors.New("memory importance must be between 0 and 1")
+	}
+
 	ms.mu.Lock()
 	defer ms.mu.Unlock()
+
+	// Check for duplicate ID
+	if _, exists := ms.memories[memory.ID]; exists {
+		return fmt.Errorf("memory with ID %s already exists", memory.ID)
+	}
 
 	// Check capacity
 	if len(ms.memories) >= ms.maxMemories {
@@ -126,18 +188,35 @@ func (ms *MemoryStore) Store(memory *Memory) error {
 	// Update indexes
 	ms.typeIndex[memory.Type][memory.ID] = memory
 	ms.addToTimeIndex(memory)
+	ms.addToKeywordIndex(memory)
 
 	if memory.Embedding != nil {
+		// Normalize embedding for faster cosine similarity
+		normalizedEmbedding := normalizeVector(memory.Embedding)
 		ms.embeddingIndex.mu.Lock()
-		ms.embeddingIndex.embeddings[memory.ID] = memory.Embedding
+		ms.embeddingIndex.embeddings[memory.ID] = normalizedEmbedding
 		ms.embeddingIndex.mu.Unlock()
 	}
 
 	return nil
 }
 
-// Retrieve memories by various criteria
+// Retrieve memories by various criteria with validation
 func (ms *MemoryStore) Query(criteria QueryCriteria) ([]*Memory, error) {
+	// Validate query criteria
+	if criteria.Type == "" {
+		return nil, errors.New("query type cannot be empty")
+	}
+	if criteria.Limit < 0 {
+		return nil, errors.New("query limit cannot be negative")
+	}
+	if criteria.Limit == 0 {
+		criteria.Limit = 10 // Default limit
+	}
+	if criteria.Limit > 1000 {
+		return nil, errors.New("query limit cannot exceed 1000")
+	}
+
 	ms.mu.RLock()
 	defer ms.mu.RUnlock()
 
@@ -165,25 +244,36 @@ func (ms *MemoryStore) Query(criteria QueryCriteria) ([]*Memory, error) {
 	return results, nil
 }
 
-// Find similar memories using embedding similarity
+// Find similar memories using embedding similarity with heap-based top-K
 func (ms *MemoryStore) findSimilar(embedding []float32, limit int) []*Memory {
-	var scores []ScoredMemory
+	// Normalize query embedding
+	normalizedQuery := normalizeVector(embedding)
+
+	// Use min-heap to maintain top-K efficiently
+	h := &ScoredMemoryHeap{}
+	heap.Init(h)
 
 	ms.embeddingIndex.mu.RLock()
 	for id, emb := range ms.embeddingIndex.embeddings {
 		if mem, ok := ms.memories[id]; ok {
-			score := cosineSimilarity(embedding, emb)
-			scores = append(scores, ScoredMemory{Memory: mem, Score: score})
+			// Since both vectors are normalized, dot product = cosine similarity
+			score := dotProduct(normalizedQuery, emb)
+
+			if h.Len() < limit {
+				heap.Push(h, &ScoredMemory{Memory: mem, Score: score})
+			} else if score > (*h)[0].Score {
+				heap.Pop(h)
+				heap.Push(h, &ScoredMemory{Memory: mem, Score: score})
+			}
 		}
 	}
 	ms.embeddingIndex.mu.RUnlock()
 
-	// Sort by score and return top k
-	sortByScore(scores)
-
-	results := make([]*Memory, 0, limit)
-	for i := 0; i < len(scores) && i < limit; i++ {
-		results = append(results, scores[i].Memory)
+	// Extract results in descending order
+	results := make([]*Memory, 0, h.Len())
+	for h.Len() > 0 {
+		scored := heap.Pop(h).(*ScoredMemory)
+		results = append([]*Memory{scored.Memory}, results...)
 	}
 
 	return results
@@ -224,13 +314,18 @@ func (ms *MemoryStore) findRelated(memoryID string, depth int) []*Memory {
 	return results
 }
 
-// Memory consolidation process
+// Memory consolidation process with graceful shutdown
 func (ms *MemoryStore) startConsolidationProcess() {
 	ticker := time.NewTicker(10 * time.Minute)
 	defer ticker.Stop()
 
-	for range ticker.C {
-		ms.consolidateMemories()
+	for {
+		select {
+		case <-ticker.C:
+			ms.consolidateMemories()
+		case <-ms.ctx.Done():
+			return
+		}
 	}
 }
 
@@ -259,13 +354,18 @@ func (ms *MemoryStore) consolidateMemories() {
 	}
 }
 
-// Memory decay process
+// Memory decay process with graceful shutdown
 func (ms *MemoryStore) startDecayProcess() {
 	ticker := time.NewTicker(ms.decayInterval)
 	defer ticker.Stop()
 
-	for range ticker.C {
-		ms.applyDecay()
+	for {
+		select {
+		case <-ticker.C:
+			ms.applyDecay()
+		case <-ms.ctx.Done():
+			return
+		}
 	}
 }
 
@@ -299,8 +399,32 @@ func (ms *MemoryStore) applyDecay() {
 
 // MCP Tool Implementations
 
-// Store a memory
+// Store a memory with comprehensive validation
 func (mcp *MCPServer) StoreMemory(ctx context.Context, args StoreMemoryArgs) (*Memory, error) {
+	// Validate arguments
+	if args.Content == "" {
+		return nil, errors.New("content cannot be empty")
+	}
+	if args.Type == "" {
+		args.Type = ShortTerm // Default to short term
+	}
+	if args.Importance < 0 || args.Importance > 1 {
+		args.Importance = 0.5 // Default importance
+	}
+
+	// Validate memory type
+	validTypes := []MemoryType{ShortTerm, LongTerm, Episodic, Semantic, Procedural}
+	valid := false
+	for _, validType := range validTypes {
+		if args.Type == validType {
+			valid = true
+			break
+		}
+	}
+	if !valid {
+		return nil, fmt.Errorf("invalid memory type: %s", args.Type)
+	}
+
 	memory := &Memory{
 		ID:          generateID(),
 		Type:        args.Type,
@@ -336,10 +460,32 @@ func (mcp *MCPServer) QueryMemories(ctx context.Context, args QueryMemoryArgs) (
 	return mcp.store.Query(criteria)
 }
 
-// Create relation between memories
+// Create relation between memories with validation
 func (mcp *MCPServer) CreateRelation(ctx context.Context, args CreateRelationArgs) error {
+	// Validate arguments
+	if args.FromID == "" {
+		return errors.New("from_id cannot be empty")
+	}
+	if args.ToID == "" {
+		return errors.New("to_id cannot be empty")
+	}
+	if args.RelationType == "" {
+		return errors.New("relation_type cannot be empty")
+	}
+	if args.Strength < 0 || args.Strength > 1 {
+		args.Strength = 0.5 // Default strength
+	}
+
 	mcp.store.mu.Lock()
 	defer mcp.store.mu.Unlock()
+
+	// Check that both memories exist
+	if _, exists := mcp.store.memories[args.FromID]; !exists {
+		return fmt.Errorf("memory with ID %s does not exist", args.FromID)
+	}
+	if _, exists := mcp.store.memories[args.ToID]; !exists {
+		return fmt.Errorf("memory with ID %s does not exist", args.ToID)
+	}
 
 	relation := &MemoryRelation{
 		From:     args.FromID,
@@ -392,6 +538,96 @@ func cosineSimilarity(a, b []float32) float32 {
 
 func sqrt(x float32) float32 {
 	return float32(math.Sqrt(float64(x)))
+}
+
+// addToKeywordIndex indexes a memory by its content words
+func (ms *MemoryStore) addToKeywordIndex(memory *Memory) {
+	ms.keywordIndex.mu.Lock()
+	defer ms.keywordIndex.mu.Unlock()
+
+	// Extract and normalize words
+	words := extractWords(memory.Content)
+	for _, word := range words {
+		if len(word) >= 3 { // Only index words with 3+ characters
+			lowerWord := strings.ToLower(word)
+			if ms.keywordIndex.index[lowerWord] == nil {
+				ms.keywordIndex.index[lowerWord] = make(map[string]*Memory)
+			}
+			ms.keywordIndex.index[lowerWord][memory.ID] = memory
+		}
+	}
+}
+
+// removeFromKeywordIndex removes a memory from keyword index
+func (ms *MemoryStore) removeFromKeywordIndex(memory *Memory) {
+	ms.keywordIndex.mu.Lock()
+	defer ms.keywordIndex.mu.Unlock()
+
+	words := extractWords(memory.Content)
+	for _, word := range words {
+		if len(word) >= 3 {
+			lowerWord := strings.ToLower(word)
+			if memories, exists := ms.keywordIndex.index[lowerWord]; exists {
+				delete(memories, memory.ID)
+				// Clean up empty entries
+				if len(memories) == 0 {
+					delete(ms.keywordIndex.index, lowerWord)
+				}
+			}
+		}
+	}
+}
+
+// extractWords splits text into indexable words
+func extractWords(text string) []string {
+	// Simple word extraction - split on whitespace and punctuation
+	words := strings.FieldsFunc(text, func(c rune) bool {
+		return !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9'))
+	})
+	return words
+}
+
+// normalizeVector normalizes a vector to unit length
+func normalizeVector(v []float32) []float32 {
+	var norm float32
+	for _, val := range v {
+		norm += val * val
+	}
+	norm = sqrt(norm)
+
+	if norm == 0 {
+		return v
+	}
+
+	normalized := make([]float32, len(v))
+	for i, val := range v {
+		normalized[i] = val / norm
+	}
+	return normalized
+}
+
+// dotProduct computes dot product of two vectors
+func dotProduct(a, b []float32) float32 {
+	var sum float32
+	for i := range a {
+		sum += a[i] * b[i]
+	}
+	return sum
+}
+
+// cleanupTimeBuckets removes old time buckets to prevent memory leaks
+func (ms *MemoryStore) cleanupTimeBuckets() {
+	ms.timeIndex.mu.Lock()
+	defer ms.timeIndex.mu.Unlock()
+
+	cutoff := time.Now().Add(-24 * time.Hour * 7) // Keep only last 7 days
+	cutoffStr := cutoff.Format("2006-01-02-15")
+
+	for bucket := range ms.timeIndex.buckets {
+		if bucket < cutoffStr {
+			delete(ms.timeIndex.buckets, bucket)
+		}
+	}
 }
 
 // Additional helper types

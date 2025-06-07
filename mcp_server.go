@@ -3,10 +3,14 @@ package main
 import (
 	"bufio"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log"
 	"os"
+	"os/signal"
 	"sort"
+	"strings"
+	"syscall"
 	"time"
 )
 
@@ -80,6 +84,17 @@ func main() {
 	server := &MCPServer{store: store}
 
 	log.SetOutput(os.Stderr) // Log to stderr to avoid interfering with protocol
+
+	// Set up graceful shutdown
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+
+	go func() {
+		<-sigChan
+		log.Println("Received shutdown signal, cleaning up...")
+		store.Shutdown()
+		os.Exit(0)
+	}()
 
 	// Use connection manager for multi-client support
 	if config.EnableSharing {
@@ -321,17 +336,44 @@ func (mcp *MCPServer) handleToolCall(msg MCPMessage) MCPMessage {
 	switch params.Name {
 	case "store_memory":
 		var args StoreMemoryArgs
-		json.Unmarshal(params.Arguments, &args)
+		if err := json.Unmarshal(params.Arguments, &args); err != nil {
+			return MCPMessage{
+				Jsonrpc: "2.0",
+				ID:      msg.ID,
+				Error: &MCPError{
+					Code:    -32602,
+					Message: fmt.Sprintf("Invalid arguments for store_memory: %v", err),
+				},
+			}
+		}
 		result, err = mcp.StoreMemory(nil, args)
 
 	case "query_memories":
 		var args QueryMemoryArgs
-		json.Unmarshal(params.Arguments, &args)
+		if err := json.Unmarshal(params.Arguments, &args); err != nil {
+			return MCPMessage{
+				Jsonrpc: "2.0",
+				ID:      msg.ID,
+				Error: &MCPError{
+					Code:    -32602,
+					Message: fmt.Sprintf("Invalid arguments for query_memories: %v", err),
+				},
+			}
+		}
 		result, err = mcp.QueryMemories(nil, args)
 
 	case "create_relation":
 		var args CreateRelationArgs
-		json.Unmarshal(params.Arguments, &args)
+		if err := json.Unmarshal(params.Arguments, &args); err != nil {
+			return MCPMessage{
+				Jsonrpc: "2.0",
+				ID:      msg.ID,
+				Error: &MCPError{
+					Code:    -32602,
+					Message: fmt.Sprintf("Invalid arguments for create_relation: %v", err),
+				},
+			}
+		}
 		err = mcp.CreateRelation(nil, args)
 		result = map[string]string{"status": "success"}
 
@@ -729,15 +771,25 @@ func (ms *MemoryStore) findByType(memType MemoryType) []*Memory {
 }
 
 func (ms *MemoryStore) findByKeywords(keywords []string) []*Memory {
-	var results []*Memory
+	resultMap := make(map[string]*Memory)
 
-	for _, mem := range ms.memories {
-		for _, keyword := range keywords {
-			if contains(mem.Content, keyword) {
-				results = append(results, mem)
-				break
+	ms.keywordIndex.mu.RLock()
+	defer ms.keywordIndex.mu.RUnlock()
+
+	// Use keyword index for fast lookup
+	for _, keyword := range keywords {
+		lowerKeyword := strings.ToLower(keyword)
+		if memories, exists := ms.keywordIndex.index[lowerKeyword]; exists {
+			for id, mem := range memories {
+				resultMap[id] = mem
 			}
 		}
+	}
+
+	// Convert map to slice
+	results := make([]*Memory, 0, len(resultMap))
+	for _, mem := range resultMap {
+		results = append(results, mem)
 	}
 
 	return results
@@ -768,23 +820,13 @@ func (ms *MemoryStore) removeMemory(id string) {
 		ms.embeddingIndex.mu.Lock()
 		delete(ms.embeddingIndex.embeddings, id)
 		ms.embeddingIndex.mu.Unlock()
+
+		// Remove from keyword index
+		ms.removeFromKeywordIndex(mem)
+
+		// Clean up old time buckets
+		ms.cleanupTimeBuckets()
 	}
 }
 
-func contains(text, keyword string) bool {
-	return len(keyword) > 0 && len(text) >= len(keyword) &&
-		(text == keyword ||
-			len(text) > len(keyword) &&
-				(text[:len(keyword)] == keyword ||
-					text[len(text)-len(keyword):] == keyword ||
-					findSubstring(text, keyword)))
-}
-
-func findSubstring(text, pattern string) bool {
-	for i := 0; i <= len(text)-len(pattern); i++ {
-		if text[i:i+len(pattern)] == pattern {
-			return true
-		}
-	}
-	return false
-}
+// Legacy contains function - now using keyword index for better performance

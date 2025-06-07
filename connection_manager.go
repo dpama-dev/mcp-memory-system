@@ -21,12 +21,12 @@ const (
 
 // ConnectionManager handles multi-client connections and server discovery
 type ConnectionManager struct {
-	isServer   bool
-	listener   net.Listener
-	clients    map[string]*ClientConnection
-	clientsMu  sync.RWMutex
-	store      *MemoryStore
-	server     *MCPServer
+	isServer  bool
+	listener  net.Listener
+	clients   map[string]*ClientConnection
+	clientsMu sync.RWMutex
+	store     *MemoryStore
+	server    *MCPServer
 }
 
 // ClientConnection represents a connected MCP client
@@ -65,35 +65,35 @@ func (cm *ConnectionManager) Start() error {
 // runAsClient forwards stdio to existing server
 func (cm *ConnectionManager) runAsClient(conn net.Conn) error {
 	defer conn.Close()
-	
+
 	// Create handoff request
 	handoffMsg := MCPMessage{
 		Jsonrpc: "2.0",
 		Method:  "handoff/request",
 		Params:  json.RawMessage(`{"client_id": "stdio"}`),
 	}
-	
+
 	// Send handoff request
 	encoder := json.NewEncoder(conn)
 	if err := encoder.Encode(handoffMsg); err != nil {
 		return fmt.Errorf("failed to send handoff request: %w", err)
 	}
-	
+
 	// Set up bidirectional forwarding
 	errChan := make(chan error, 2)
-	
+
 	// Forward stdin to server
 	go func() {
 		_, err := io.Copy(conn, os.Stdin)
 		errChan <- err
 	}()
-	
+
 	// Forward server responses to stdout
 	go func() {
 		_, err := io.Copy(os.Stdout, conn)
 		errChan <- err
 	}()
-	
+
 	// Wait for either direction to fail
 	err := <-errChan
 	return err
@@ -102,10 +102,10 @@ func (cm *ConnectionManager) runAsClient(conn net.Conn) error {
 // runAsServer starts the server and accepts connections
 func (cm *ConnectionManager) runAsServer() error {
 	cm.isServer = true
-	
+
 	// Remove old pipe if exists
 	os.Remove(pipePath)
-	
+
 	// Create named pipe listener
 	listener, err := net.Listen("unix", pipePath)
 	if err != nil {
@@ -114,13 +114,13 @@ func (cm *ConnectionManager) runAsServer() error {
 	cm.listener = listener
 	defer listener.Close()
 	defer os.Remove(pipePath)
-	
+
 	// Handle stdio as primary client
 	go cm.handleStdioClient()
-	
+
 	// Accept additional connections
 	go cm.acceptConnections()
-	
+
 	// Wait forever (or until interrupted)
 	select {}
 }
@@ -133,11 +133,11 @@ func (cm *ConnectionManager) handleStdioClient() {
 		Writer:   bufio.NewWriter(os.Stdout),
 		LastSeen: time.Now(),
 	}
-	
+
 	cm.clientsMu.Lock()
 	cm.clients[client.ID] = client
 	cm.clientsMu.Unlock()
-	
+
 	// Process messages
 	for {
 		line, err := client.Reader.ReadString('\n')
@@ -148,29 +148,29 @@ func (cm *ConnectionManager) handleStdioClient() {
 			log.Printf("Error reading from stdio: %v", err)
 			continue
 		}
-		
+
 		var msg MCPMessage
 		if err := json.Unmarshal([]byte(line), &msg); err != nil {
 			log.Printf("Error parsing message: %v", err)
 			continue
 		}
-		
+
 		// Update last seen
 		client.LastSeen = time.Now()
-		
+
 		// Handle message
 		response := cm.handleMessage(msg, client)
-		
+
 		// Send response if not a notification
 		if msg.Method != "" && response.Jsonrpc == "" {
 			continue
 		}
-		
+
 		if err := cm.sendResponse(client, response); err != nil {
 			log.Printf("Error sending response: %v", err)
 		}
 	}
-	
+
 	// Clean up
 	cm.clientsMu.Lock()
 	delete(cm.clients, client.ID)
@@ -185,7 +185,7 @@ func (cm *ConnectionManager) acceptConnections() {
 			log.Printf("Error accepting connection: %v", err)
 			continue
 		}
-		
+
 		go cm.handleClient(conn)
 	}
 }
@@ -193,7 +193,7 @@ func (cm *ConnectionManager) acceptConnections() {
 // handleClient processes a connected client
 func (cm *ConnectionManager) handleClient(conn net.Conn) {
 	defer conn.Close()
-	
+
 	clientID := fmt.Sprintf("client-%d", time.Now().UnixNano())
 	client := &ClientConnection{
 		ID:       clientID,
@@ -202,13 +202,13 @@ func (cm *ConnectionManager) handleClient(conn net.Conn) {
 		Writer:   bufio.NewWriter(conn),
 		LastSeen: time.Now(),
 	}
-	
+
 	cm.clientsMu.Lock()
 	cm.clients[clientID] = client
 	cm.clientsMu.Unlock()
-	
+
 	log.Printf("Client connected: %s", clientID)
-	
+
 	// Process messages
 	decoder := json.NewDecoder(client.Reader)
 	for {
@@ -220,29 +220,29 @@ func (cm *ConnectionManager) handleClient(conn net.Conn) {
 			log.Printf("Error decoding message from %s: %v", clientID, err)
 			continue
 		}
-		
+
 		// Update last seen
 		client.LastSeen = time.Now()
-		
+
 		// Handle message
 		response := cm.handleMessage(msg, client)
-		
+
 		// Send response if not a notification
 		if msg.Method != "" && response.Jsonrpc == "" {
 			continue
 		}
-		
+
 		if err := cm.sendResponse(client, response); err != nil {
 			log.Printf("Error sending response to %s: %v", clientID, err)
 			break
 		}
 	}
-	
+
 	// Clean up
 	cm.clientsMu.Lock()
 	delete(cm.clients, clientID)
 	cm.clientsMu.Unlock()
-	
+
 	log.Printf("Client disconnected: %s", clientID)
 }
 
@@ -252,7 +252,7 @@ func (cm *ConnectionManager) handleMessage(msg MCPMessage, client *ClientConnect
 	if msg.Method == "handoff/request" {
 		return cm.handleHandoffRequest(msg, client)
 	}
-	
+
 	// Regular message handling
 	return cm.server.handleMessage(msg)
 }
@@ -260,7 +260,7 @@ func (cm *ConnectionManager) handleMessage(msg MCPMessage, client *ClientConnect
 // handleHandoffRequest processes handoff from stdio to pipe client
 func (cm *ConnectionManager) handleHandoffRequest(msg MCPMessage, client *ClientConnection) MCPMessage {
 	log.Printf("Handoff requested by %s", client.ID)
-	
+
 	// Send acknowledgment
 	return MCPMessage{
 		Jsonrpc: "2.0",
@@ -282,7 +282,7 @@ func (cm *ConnectionManager) sendResponse(client *ClientConnection, response MCP
 	if err != nil {
 		return err
 	}
-	
+
 	client.Writer.Write(responseBytes)
 	client.Writer.WriteByte('\n')
 	return client.Writer.Flush()
