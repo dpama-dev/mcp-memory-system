@@ -79,12 +79,26 @@ func main() {
 	store := NewMemoryStore(config.MaxMemories)
 	server := &MCPServer{store: store}
 
-	// Set up stdio transport
+	log.SetOutput(os.Stderr) // Log to stderr to avoid interfering with protocol
+
+	// Use connection manager for multi-client support
+	if config.EnableSharing {
+		connManager := NewConnectionManager(store, server)
+		if err := connManager.Start(); err != nil {
+			log.Fatalf("Failed to start connection manager: %v", err)
+		}
+	} else {
+		// Original stdio-only mode
+		runStdioMode(server)
+	}
+}
+
+// runStdioMode runs the server in traditional stdio mode
+func runStdioMode(server *MCPServer) {
 	reader := bufio.NewReader(os.Stdin)
 	writer := bufio.NewWriter(os.Stdout)
 
-	log.SetOutput(os.Stderr) // Log to stderr to avoid interfering with protocol
-	log.Println("Memory MCP Server started")
+	log.Println("Memory MCP Server started (stdio mode)")
 
 	// Main message loop
 	for {
@@ -444,6 +458,46 @@ func (mcp *MCPServer) GetWiki() string {
 
 ## Overview
 This is a cognitive memory system that provides fast, in-memory storage and retrieval for AI agents. It models human-like memory with different types, automatic consolidation, decay, and relationship tracking.
+
+## Multi-Client Memory Sharing (NEW)
+
+### Enable Shared Mode
+Run the server with --enable-sharing flag to allow multiple clients to share the same memory space:
+
+	./mcp-memory-server --enable-sharing
+
+### How It Works
+1. **First Client**: Starts the server and creates a named pipe at /tmp/mcp-memory-server.pipe
+2. **Additional Clients**: Automatically detect the running server and connect via the pipe
+3. **Shared Memory**: All clients access the same in-memory store
+4. **Handoff Protocol**: Clients announce themselves and can transfer connections
+
+### Benefits
+- Share memories between Claude Desktop and Claude Code
+- Maintain context across different AI interfaces
+- No external dependencies or persistence required
+- Automatic server discovery
+
+### Example Configuration
+Terminal 1 - Claude Desktop config:
+	{
+	  "mcpServers": {
+	    "memory": {
+	      "command": "/path/to/mcp-memory-server",
+	      "args": ["--enable-sharing", "--max-memories", "1000"]
+	    }
+	  }
+	}
+
+Terminal 2 - Claude Code config (will connect to same server):
+	{
+	  "mcpServers": {
+	    "memory": {
+	      "command": "/path/to/mcp-memory-server",
+	      "args": ["--enable-sharing", "--max-memories", "1000"]
+	    }
+	  }
+	}
 
 ## Memory Types
 

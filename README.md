@@ -158,6 +158,20 @@ top -pid $(pgrep mcp-memory-server)
 tail -f ~/Library/Logs/mcp-memory-server.log
 ```
 
+## Memory Sharing Between Clients (NEW)
+
+You can now share memories between Claude Desktop and Claude Code! Use the `--enable-sharing` flag:
+
+```bash
+./mcp-memory-server --enable-sharing
+```
+
+This allows:
+- First client starts the server
+- Additional clients automatically connect to the existing server
+- All clients share the same memory space
+- Perfect for maintaining context across different Claude interfaces
+
 ## Available MCP Tools
 
 1. **store_memory** - Store a new memory with type, content, and metadata

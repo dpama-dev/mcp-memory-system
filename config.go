@@ -13,6 +13,7 @@ type Config struct {
 	DecayInterval   time.Duration
 	Port            int
 	EnableProfiling bool
+	EnableSharing   bool
 }
 
 func LoadConfig() *Config {
@@ -23,6 +24,7 @@ func LoadConfig() *Config {
 	flag.DurationVar(&config.DecayInterval, "decay-interval", 5*time.Minute, "Memory decay check interval")
 	flag.IntVar(&config.Port, "port", 0, "Port for HTTP transport (0 for stdio)")
 	flag.BoolVar(&config.EnableProfiling, "profile", false, "Enable memory profiling")
+	flag.BoolVar(&config.EnableSharing, "enable-sharing", false, "Enable memory sharing between clients")
 
 	flag.Parse()
 
