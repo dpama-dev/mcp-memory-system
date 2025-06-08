@@ -169,3 +169,76 @@ go test -cover          # Run with coverage
 go test -bench=.        # Run performance benchmarks
 go test -race           # Test for race conditions
 ```
+
+## Task Management System
+
+This project follows a structured task management approach for efficient feature development and project tracking.
+
+### Project Management Framework
+
+#### Strategic Planning (Top-Down)
+- **`.project_management/potential_new_features.md`**: Strategic backlog of all potential features/projects under consideration
+- **`.project_management/current_project.md`**: Active project scope with ordered feature pipeline in logical implementation order
+- **`.project_management/current_feature.md`**: Current feature breakdown with specific tasks in execution order
+
+#### Execution Flow (Bottom-Up)
+- Start with `current_feature.md` and execute one task at a time
+- Get user sign-off between tasks when they are completed and testable
+- Strike through completed tasks and move to next
+- Feature completion: strike feature from `current_project.md`, select next feature, update `current_feature.md`
+
+### Task Guidelines
+
+#### Task Granularity
+- **Task Level**: Reasonable scope (e.g., "add database schema")
+- **Sub-task Details**: Include sufficient detail within task description using bullet points
+- **Philosophy**: Keep simple, avoid over-engineering, maintain iterative development flow
+
+#### Feature Classification
+- **`end-user-feature`**: Direct user-facing functionality
+- **`tech-debt`**: Addressing existing code/architecture issues
+- **`technical-improvements`**: Infrastructure, performance, developer experience
+
+#### Feature Status Progression
+- **`in-refinement`**: Discussion phase, scope unclear
+- **`refined`**: Feature defined, tasks created, ready for work
+- **`in-progress`**: First task started
+- **`complete`**: Struck out in `current_project.md`
+
+#### User Sign-off Process
+- **Trigger**: When task(s) are completed and testable
+- **Methods**: Demonstration (show what was built) OR user testing (hands-on validation)
+- **Flexibility**: Context-dependent approach based on task type
+
+## Documentation Management
+
+This project maintains two documentation approaches with specific update strategies:
+
+### Technical Documentation (`README.md`)
+- **Target audience**: Developers, system administrators, technical users
+- **Focus**: Architecture, setup guides, codebase essentials, technical specifications
+- **Content strategy**: Concise but complete, just enough detail without becoming too large
+- **Update timing**: Per feature completion (unless feature is too large, then per user request)
+- **Value proposition**: Must provide clear value to technical audience
+
+### Business Documentation (`business_readme.md`)
+- **Target audience**: End users, business stakeholders, non-technical decision makers
+- **Focus**: New features, behavior changes, use cases, practical examples
+- **Content strategy**: User-friendly explanations with potential to evolve into user guide/release notes
+- **Update timing**: Per feature completion (unless feature is too large, then per user request)
+- **Value proposition**: Must provide clear value to non-technical end users
+
+### Documentation Sync Requirements
+When making changes that affect user-facing functionality:
+
+1. **Update technical README** with implementation details, configuration options, and performance metrics
+2. **Update business README** with new use cases, updated examples, and user-friendly explanations
+3. **Maintain consistency** between both documents regarding feature capabilities
+4. **Update CLAUDE.md** (this file) when architectural changes occur
+
+**Important**: Both documentation files should be updated together when:
+- New MCP tools are added
+- Memory types or behaviors change  
+- Performance characteristics improve significantly
+- New use cases or workflows are enabled
+- Installation or setup procedures change
