@@ -45,6 +45,7 @@ This is an MCP (Model Context Protocol) server that implements a cognitive-inspi
 - Handles tool registration and invocation (store_memory, query_memories, create_relation, get_stats, wiki)
 - Routes MCP messages to appropriate handlers
 - Manages resources for memory statistics and graph visualization
+- **Documentation Module** (`internal/docs/wiki.go`): Separated wiki documentation for better maintainability
 
 ### 2. Memory Store Core (`memory_store.go`) - RECENTLY OPTIMIZED
 - **In-memory storage** with configurable limits (default 1000 memories, 100MB)
@@ -103,6 +104,10 @@ This is an MCP (Model Context Protocol) server that implements a cognitive-inspi
 - **Time Bucket Cleanup**: Prevents unbounded growth of time indexes
 - **Vector Normalization**: Pre-computed for faster similarity calculations
 - **Enhanced Validation**: Comprehensive input validation and error handling
+
+### Code Organization
+- **Documentation Extraction**: Wiki documentation moved to `internal/docs/wiki.go` for better separation of concerns
+- **Maintainability**: Large embedded strings extracted from server code for easier maintenance
 
 ## MCP Integration Points
 

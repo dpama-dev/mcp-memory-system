@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"testing"
 	"time"
+
+	"mcp-memory-system/internal/docs"
 )
 
 // Test MCP message handling
@@ -427,11 +429,7 @@ func TestGetStats(t *testing.T) {
 
 // Test wiki tool
 func TestGetWiki(t *testing.T) {
-	store := NewMemoryStore(10)
-	defer store.Shutdown()
-	server := &MCPServer{store: store}
-	
-	wiki := server.GetWiki()
+	wiki := docs.GetWiki()
 	
 	// Verify wiki contains expected sections
 	expectedSections := []string{
