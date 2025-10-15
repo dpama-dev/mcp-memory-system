@@ -29,6 +29,20 @@ type MCPError struct {
 	Message string `json:"message"`
 }
 
+// ProgressNotification for long-running operations (MCP 2025-03-26)
+type ProgressNotification struct {
+	Jsonrpc string                 `json:"jsonrpc"`
+	Method  string                 `json:"method"`
+	Params  ProgressNotificationParams `json:"params"`
+}
+
+type ProgressNotificationParams struct {
+	ProgressToken interface{} `json:"progressToken"`
+	Progress      float64     `json:"progress"`      // 0.0 to 1.0
+	Total         *float64    `json:"total,omitempty"` // Optional total units
+	Message       string      `json:"message"`       // Descriptive status message (NEW in 2025-03-26)
+}
+
 // MCP Initialize Response
 type InitializeResult struct {
 	ProtocolVersion string          `json:"protocolVersion"`
@@ -57,9 +71,16 @@ type ServerInfo struct {
 
 // Tool definitions
 type Tool struct {
-	Name        string      `json:"name"`
-	Description string      `json:"description"`
-	InputSchema InputSchema `json:"inputSchema"`
+	Name        string          `json:"name"`
+	Description string          `json:"description"`
+	InputSchema InputSchema     `json:"inputSchema"`
+	Annotations *ToolAnnotations `json:"annotations,omitempty"`
+}
+
+// ToolAnnotations describes tool behavior (MCP 2025-03-26)
+type ToolAnnotations struct {
+	ReadOnly    bool `json:"readOnly"`    // Tool doesn't modify state
+	Destructive bool `json:"destructive"` // Tool performs irreversible actions
 }
 
 type InputSchema struct {
@@ -184,7 +205,7 @@ func (mcp *MCPServer) handleInitialize(msg MCPMessage) MCPMessage {
 		Jsonrpc: "2.0",
 		ID:      msg.ID,
 		Result: InitializeResult{
-			ProtocolVersion: "2024-11-05",
+			ProtocolVersion: "2025-03-26",
 			Capabilities: MCPCapabilities{
 				Tools: &ToolsCapability{
 					ListChanged: true,
@@ -196,7 +217,7 @@ func (mcp *MCPServer) handleInitialize(msg MCPMessage) MCPMessage {
 			},
 			ServerInfo: ServerInfo{
 				Name:    "mcp-memory-server",
-				Version: "1.0.0",
+				Version: "1.1.0",
 			},
 		},
 	}
@@ -230,6 +251,10 @@ func (mcp *MCPServer) handleToolsList(msg MCPMessage) MCPMessage {
 				},
 				Required: []string{"type", "content"},
 			},
+			Annotations: &ToolAnnotations{
+				ReadOnly:    false, // Modifies memory store
+				Destructive: false, // Doesn't delete existing data
+			},
 		},
 		{
 			Name:        "query_memories",
@@ -257,6 +282,10 @@ func (mcp *MCPServer) handleToolsList(msg MCPMessage) MCPMessage {
 				},
 				Required: []string{"query_type"},
 			},
+			Annotations: &ToolAnnotations{
+				ReadOnly:    true,  // Only reads data
+				Destructive: false, // No destructive actions
+			},
 		},
 		{
 			Name:        "create_relation",
@@ -283,6 +312,10 @@ func (mcp *MCPServer) handleToolsList(msg MCPMessage) MCPMessage {
 				},
 				Required: []string{"from_id", "to_id", "relation_type"},
 			},
+			Annotations: &ToolAnnotations{
+				ReadOnly:    false, // Modifies relationships
+				Destructive: false, // Doesn't delete data
+			},
 		},
 		{
 			Name:        "get_stats",
@@ -292,6 +325,10 @@ func (mcp *MCPServer) handleToolsList(msg MCPMessage) MCPMessage {
 				Properties: map[string]Property{},
 				Required:   []string{},
 			},
+			Annotations: &ToolAnnotations{
+				ReadOnly:    true,  // Only reads statistics
+				Destructive: false, // No modifications
+			},
 		},
 		{
 			Name:        "wiki",
@@ -300,6 +337,10 @@ func (mcp *MCPServer) handleToolsList(msg MCPMessage) MCPMessage {
 				Type:       "object",
 				Properties: map[string]Property{},
 				Required:   []string{},
+			},
+			Annotations: &ToolAnnotations{
+				ReadOnly:    true,  // Only returns documentation
+				Destructive: false, // No modifications
 			},
 		},
 	}
@@ -405,16 +446,31 @@ func (mcp *MCPServer) handleToolCall(msg MCPMessage) MCPMessage {
 		}
 	}
 
+	// MCP 2025-03-26: Return both text and structured JSON content
+	content := []map[string]interface{}{
+		{
+			"type": "text",
+			"text": formatResult(result),
+		},
+	}
+
+	// Add structured content for non-string results
+	if params.Name != "wiki" {
+		content = append(content, map[string]interface{}{
+			"type": "resource",
+			"resource": map[string]interface{}{
+				"uri":      fmt.Sprintf("memory://tool-result/%s", params.Name),
+				"mimeType": "application/json",
+				"text":     formatResult(result),
+			},
+		})
+	}
+
 	return MCPMessage{
 		Jsonrpc: "2.0",
 		ID:      msg.ID,
 		Result: map[string]interface{}{
-			"content": []map[string]interface{}{
-				{
-					"type": "text",
-					"text": formatResult(result),
-				},
-			},
+			"content": content,
 		},
 	}
 }

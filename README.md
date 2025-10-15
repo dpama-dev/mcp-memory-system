@@ -2,6 +2,15 @@
 
 An in-memory AI memory system implemented as an MCP (Model Context Protocol) server. This server provides fast, cognitive-inspired memory storage and retrieval for AI agents without requiring external databases.
 
+## 📡 MCP Protocol Compliance
+
+**Protocol Version: 2025-03-26** (Upgraded from 2024-11-05)
+
+This server implements the latest MCP specification with:
+- **Tool Annotations**: All tools tagged with `readOnly` and `destructive` flags for safer client operation
+- **Structured Output**: JSON responses alongside text for better client parsing
+- **Progress Notifications**: Support for long-running operation progress tracking with descriptive messages
+
 ## 🚀 Recent Performance Improvements
 
 This version includes major performance optimizations:

@@ -39,8 +39,8 @@ func TestHandleInitialize(t *testing.T) {
 	}
 	
 	// Verify protocol version
-	if result.ProtocolVersion != "2024-11-05" {
-		t.Errorf("Expected protocol version 2024-11-05, got %s", result.ProtocolVersion)
+	if result.ProtocolVersion != "2025-03-26" {
+		t.Errorf("Expected protocol version 2025-03-26, got %s", result.ProtocolVersion)
 	}
 	
 	// Verify capabilities
