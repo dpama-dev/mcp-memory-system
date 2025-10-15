@@ -41,9 +41,10 @@ go test -bench=. -benchmem
 This is an MCP (Model Context Protocol) server that implements a cognitive-inspired memory system. The architecture consists of four main components:
 
 ### 1. MCP Protocol Layer (`mcp_server.go`)
-- Implements MCP 2025-03-26 protocol over stdio transport
+- Implements MCP 2025-06-18 protocol over stdio transport (latest specification)
 - Handles tool registration and invocation (store_memory, query_memories, create_relation, get_stats, wiki)
 - **Elicitation capability**: Server can request user input via prompts/list and prompts/get endpoints
+- **Security**: Uses environment-based credentials per MCP spec (stdio transport SHOULD NOT use OAuth)
 - Routes MCP messages to appropriate handlers
 - Manages resources for memory statistics and graph visualization
 

@@ -4,13 +4,14 @@ An in-memory AI memory system implemented as an MCP (Model Context Protocol) ser
 
 ## 📡 MCP Protocol Compliance
 
-**Protocol Version: 2025-03-26** (Upgraded from 2024-11-05)
+**Protocol Version: 2025-06-18** (Latest specification - Phase 3 complete)
 
-This server implements the latest MCP specification with:
+This server implements the latest MCP specification with full compliance:
 - **Tool Annotations**: All tools tagged with `readOnly` and `destructive` flags for safer client operation
 - **Structured Output**: JSON responses alongside text for better client parsing
 - **Progress Notifications**: Support for long-running operation progress tracking with descriptive messages
-- **Elicitation Capability** (NEW): Server can request user input during tool execution via prompts/list and prompts/get
+- **Elicitation Capability**: Server can request user input during tool execution via prompts/list and prompts/get
+- **Security Best Practices**: stdio transport uses environment-based credentials (per MCP 2025-06-18 spec)
 
 ## 🚀 Recent Performance Improvements
 

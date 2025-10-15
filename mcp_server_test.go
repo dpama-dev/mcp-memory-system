@@ -38,9 +38,9 @@ func TestHandleInitialize(t *testing.T) {
 		t.Fatal("Response result is not InitializeResult")
 	}
 	
-	// Verify protocol version
-	if result.ProtocolVersion != "2025-03-26" {
-		t.Errorf("Expected protocol version 2025-03-26, got %s", result.ProtocolVersion)
+	// Verify protocol version (Phase 3 - MCP 2025-06-18)
+	if result.ProtocolVersion != "2025-06-18" {
+		t.Errorf("Expected protocol version 2025-06-18, got %s", result.ProtocolVersion)
 	}
 	
 	// Verify capabilities

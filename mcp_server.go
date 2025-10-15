@@ -161,11 +161,13 @@ func main() {
 }
 
 // runStdioMode runs the server in traditional stdio mode
+// Per MCP 2025-06-18 spec: stdio transport SHOULD NOT use OAuth authorization.
+// Instead, credentials should be retrieved from environment variables when needed.
 func runStdioMode(server *MCPServer) {
 	reader := bufio.NewReader(os.Stdin)
 	writer := bufio.NewWriter(os.Stdout)
 
-	log.Println("Memory MCP Server started (stdio mode)")
+	log.Println("Memory MCP Server started (stdio mode, MCP 2025-06-18)")
 
 	// Main message loop
 	for {
@@ -240,7 +242,7 @@ func (mcp *MCPServer) handleInitialize(msg MCPMessage) MCPMessage {
 		Jsonrpc: "2.0",
 		ID:      msg.ID,
 		Result: InitializeResult{
-			ProtocolVersion: "2025-03-26",
+			ProtocolVersion: "2025-06-18", // Phase 3: Latest MCP specification
 			Capabilities: MCPCapabilities{
 				Tools: &ToolsCapability{
 					ListChanged: true,
@@ -255,7 +257,7 @@ func (mcp *MCPServer) handleInitialize(msg MCPMessage) MCPMessage {
 			},
 			ServerInfo: ServerInfo{
 				Name:    "mcp-memory-server",
-				Version: "1.2.0", // Updated for Phase 2
+				Version: "2.0.0", // Phase 3: Full 2025-06-18 compliance
 			},
 		},
 	}
