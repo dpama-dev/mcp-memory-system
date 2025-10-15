@@ -43,6 +43,7 @@ This is an MCP (Model Context Protocol) server that implements a cognitive-inspi
 ### 1. MCP Protocol Layer (`mcp_server.go`)
 - Implements MCP 2025-03-26 protocol over stdio transport
 - Handles tool registration and invocation (store_memory, query_memories, create_relation, get_stats, wiki)
+- **Elicitation capability**: Server can request user input via prompts/list and prompts/get endpoints
 - Routes MCP messages to appropriate handlers
 - Manages resources for memory statistics and graph visualization
 
@@ -112,6 +113,12 @@ The server exposes 5 MCP tools:
 - `create_relation`: Links memories in a directed graph structure
 - `get_stats`: Returns store statistics and capacity usage
 - `wiki`: Provides comprehensive usage documentation
+
+The server exposes 2 elicitation prompts:
+- `confirm_importance`: Ask user to confirm/adjust importance level for a memory
+- `clarify_memory_type`: Ask user to specify the appropriate memory type
+
+This allows the server to request clarification from the client during tool execution.
 
 ## Performance Considerations
 

@@ -69,6 +69,7 @@ func (cm *ConnectionManager) runAsClient(conn net.Conn) error {
 	// Create handoff request
 	handoffMsg := MCPMessage{
 		Jsonrpc: "2.0",
+		ID:      1, // Required for request messages per JSON-RPC 2.0
 		Method:  "handoff/request",
 		Params:  json.RawMessage(`{"client_id": "stdio"}`),
 	}

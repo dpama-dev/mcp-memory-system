@@ -8,7 +8,6 @@ import (
 	"log"
 	"os"
 	"os/signal"
-	"sort"
 	"strings"
 	"syscall"
 	"time"
@@ -43,6 +42,33 @@ type ProgressNotificationParams struct {
 	Message       string      `json:"message"`       // Descriptive status message (NEW in 2025-03-26)
 }
 
+// Elicitation support (MCP 2025-03-26) - allows server to request info from client
+type ElicitationRequest struct {
+	Jsonrpc string                    `json:"jsonrpc"`
+	Method  string                    `json:"method"` // "prompts/get"
+	ID      interface{}               `json:"id"`
+	Params  ElicitationRequestParams  `json:"params"`
+}
+
+type ElicitationRequestParams struct {
+	Name      string                 `json:"name"`
+	Arguments map[string]interface{} `json:"arguments,omitempty"`
+}
+
+type ElicitationResponse struct {
+	Messages []ElicitationMessage `json:"messages"`
+}
+
+type ElicitationMessage struct {
+	Role    string                 `json:"role"`
+	Content ElicitationContent     `json:"content"`
+}
+
+type ElicitationContent struct {
+	Type string `json:"type"`
+	Text string `json:"text"`
+}
+
 // MCP Initialize Response
 type InitializeResult struct {
 	ProtocolVersion string          `json:"protocolVersion"`
@@ -53,6 +79,7 @@ type InitializeResult struct {
 type MCPCapabilities struct {
 	Tools     *ToolsCapability     `json:"tools,omitempty"`
 	Resources *ResourcesCapability `json:"resources,omitempty"`
+	Prompts   *PromptsCapability   `json:"prompts,omitempty"` // NEW in 2025-03-26
 }
 
 type ToolsCapability struct {
@@ -61,6 +88,10 @@ type ToolsCapability struct {
 
 type ResourcesCapability struct {
 	Subscribe   bool `json:"subscribe"`
+	ListChanged bool `json:"listChanged"`
+}
+
+type PromptsCapability struct {
 	ListChanged bool `json:"listChanged"`
 }
 
@@ -184,6 +215,10 @@ func (mcp *MCPServer) handleMessage(msg MCPMessage) MCPMessage {
 		return mcp.handleResourcesList(msg)
 	case "resources/read":
 		return mcp.handleResourceRead(msg)
+	case "prompts/list":
+		return mcp.handlePromptsList(msg)
+	case "prompts/get":
+		return mcp.handlePromptsGet(msg)
 	case "notifications/initialized":
 		// Client has initialized, just acknowledge
 		log.Println("Client initialized successfully")
@@ -214,10 +249,13 @@ func (mcp *MCPServer) handleInitialize(msg MCPMessage) MCPMessage {
 					Subscribe:   true,
 					ListChanged: true,
 				},
+				Prompts: &PromptsCapability{
+					ListChanged: false, // Static prompts for now
+				},
 			},
 			ServerInfo: ServerInfo{
 				Name:    "mcp-memory-server",
-				Version: "1.1.0",
+				Version: "1.2.0", // Updated for Phase 2
 			},
 		},
 	}
@@ -550,6 +588,112 @@ func (mcp *MCPServer) handleResourceRead(msg MCPMessage) MCPMessage {
 	}
 }
 
+// Handle prompts/list - elicitation capability (MCP 2025-03-26)
+func (mcp *MCPServer) handlePromptsList(msg MCPMessage) MCPMessage {
+	prompts := []map[string]interface{}{
+		{
+			"name":        "confirm_importance",
+			"description": "Ask user to confirm importance level for a memory",
+			"arguments": []map[string]interface{}{
+				{
+					"name":        "memory_content",
+					"description": "The content of the memory being stored",
+					"required":    true,
+				},
+				{
+					"name":        "suggested_importance",
+					"description": "Suggested importance score (0-1)",
+					"required":    true,
+				},
+			},
+		},
+		{
+			"name":        "clarify_memory_type",
+			"description": "Ask user to clarify what type of memory to store",
+			"arguments": []map[string]interface{}{
+				{
+					"name":        "memory_content",
+					"description": "The content being stored",
+					"required":    true,
+				},
+			},
+		},
+	}
+
+	return MCPMessage{
+		Jsonrpc: "2.0",
+		ID:      msg.ID,
+		Result: map[string]interface{}{
+			"prompts": prompts,
+		},
+	}
+}
+
+// Handle prompts/get - execute elicitation prompt (MCP 2025-03-26)
+func (mcp *MCPServer) handlePromptsGet(msg MCPMessage) MCPMessage {
+	var params ElicitationRequestParams
+
+	if err := json.Unmarshal(msg.Params, &params); err != nil {
+		return MCPMessage{
+			Jsonrpc: "2.0",
+			ID:      msg.ID,
+			Error: &MCPError{
+				Code:    -32602,
+				Message: "Invalid params",
+			},
+		}
+	}
+
+	var messages []ElicitationMessage
+
+	switch params.Name {
+	case "confirm_importance":
+		content := params.Arguments["memory_content"].(string)
+		importance := params.Arguments["suggested_importance"].(float64)
+
+		messages = []ElicitationMessage{
+			{
+				Role: "user",
+				Content: ElicitationContent{
+					Type: "text",
+					Text: fmt.Sprintf("I'm about to store this memory with importance %.1f:\n\n%s\n\nDoes this importance level seem appropriate? (0.0-1.0, where 1.0 is critical)", importance, content),
+				},
+			},
+		}
+
+	case "clarify_memory_type":
+		content := params.Arguments["memory_content"].(string)
+
+		messages = []ElicitationMessage{
+			{
+				Role: "user",
+				Content: ElicitationContent{
+					Type: "text",
+					Text: fmt.Sprintf("What type of memory should I use for:\n\n%s\n\nOptions:\n- short_term: Temporary information from current conversation\n- long_term: Important facts to remember permanently\n- episodic: Specific events or interactions\n- semantic: Facts, knowledge, and concepts\n- procedural: How-to knowledge and patterns", content),
+				},
+			},
+		}
+
+	default:
+		return MCPMessage{
+			Jsonrpc: "2.0",
+			ID:      msg.ID,
+			Error: &MCPError{
+				Code:    -32602,
+				Message: "Unknown prompt",
+			},
+		}
+	}
+
+	return MCPMessage{
+		Jsonrpc: "2.0",
+		ID:      msg.ID,
+		Result: ElicitationResponse{
+			Messages: messages,
+		},
+	}
+}
+
 // Get wiki documentation
 func (mcp *MCPServer) GetWiki() string {
 	return `# Memory System Documentation
@@ -783,12 +927,6 @@ Remember: This system helps maintain context across interactions. Use it thought
 func formatResult(v interface{}) string {
 	bytes, _ := json.MarshalIndent(v, "", "  ")
 	return string(bytes)
-}
-
-func sortByScore(scores []ScoredMemory) {
-	sort.Slice(scores, func(i, j int) bool {
-		return scores[i].Score > scores[j].Score
-	})
 }
 
 func (ms *MemoryStore) addToTimeIndex(memory *Memory) {

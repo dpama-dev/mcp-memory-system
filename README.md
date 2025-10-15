@@ -10,6 +10,7 @@ This server implements the latest MCP specification with:
 - **Tool Annotations**: All tools tagged with `readOnly` and `destructive` flags for safer client operation
 - **Structured Output**: JSON responses alongside text for better client parsing
 - **Progress Notifications**: Support for long-running operation progress tracking with descriptive messages
+- **Elicitation Capability** (NEW): Server can request user input during tool execution via prompts/list and prompts/get
 
 ## 🚀 Recent Performance Improvements
 
@@ -201,6 +202,15 @@ This allows:
 3. **create_relation** - Create relationships between memories
 4. **get_stats** - Get memory store statistics
 5. **wiki** - Get comprehensive documentation on how to use the memory system
+
+## Available Prompts (Elicitation)
+
+The server can request information from the client during operations:
+
+1. **confirm_importance** - Ask user to confirm/adjust importance level for a memory
+2. **clarify_memory_type** - Ask user to specify the appropriate memory type
+
+These prompts enable interactive memory management, allowing the server to seek clarification when needed.
 
 ## Memory Types
 

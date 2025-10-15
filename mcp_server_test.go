@@ -47,9 +47,14 @@ func TestHandleInitialize(t *testing.T) {
 	if result.Capabilities.Tools == nil || !result.Capabilities.Tools.ListChanged {
 		t.Error("Tools capability not properly set")
 	}
-	
+
 	if result.Capabilities.Resources == nil || !result.Capabilities.Resources.Subscribe {
 		t.Error("Resources capability not properly set")
+	}
+
+	// Verify prompts capability (Phase 2 - MCP 2025-03-26)
+	if result.Capabilities.Prompts == nil {
+		t.Error("Prompts capability not set")
 	}
 }
 
@@ -563,6 +568,136 @@ func TestMalformedToolArguments(t *testing.T) {
 		t.Error("Expected error for malformed arguments, got nil")
 	}
 	
+	if response.Error.Code != -32602 {
+		t.Errorf("Expected error code -32602, got %d", response.Error.Code)
+	}
+}
+
+// Test prompts list (Phase 2 - Elicitation capability)
+func TestHandlePromptsList(t *testing.T) {
+	store := NewMemoryStore(10)
+	defer store.Shutdown()
+	server := &MCPServer{store: store}
+
+	msg := MCPMessage{
+		Jsonrpc: "2.0",
+		ID:      8,
+		Method:  "prompts/list",
+	}
+
+	response := server.handleMessage(msg)
+
+	if response.Error != nil {
+		t.Fatalf("Expected no error, got %v", response.Error)
+	}
+
+	result, ok := response.Result.(map[string]interface{})
+	if !ok {
+		t.Fatal("Response result is not a map")
+	}
+
+	prompts, ok := result["prompts"].([]map[string]interface{})
+	if !ok {
+		t.Fatal("Prompts not found in response")
+	}
+
+	// Verify we have expected prompts
+	if len(prompts) != 2 {
+		t.Errorf("Expected 2 prompts, got %d", len(prompts))
+	}
+
+	// Verify prompt names
+	promptNames := make(map[string]bool)
+	for _, prompt := range prompts {
+		name, ok := prompt["name"].(string)
+		if ok {
+			promptNames[name] = true
+		}
+	}
+
+	expectedPrompts := []string{"confirm_importance", "clarify_memory_type"}
+	for _, expected := range expectedPrompts {
+		if !promptNames[expected] {
+			t.Errorf("Expected prompt %s not found", expected)
+		}
+	}
+}
+
+// Test prompts get (Phase 2 - Elicitation capability)
+func TestHandlePromptsGet(t *testing.T) {
+	store := NewMemoryStore(10)
+	defer store.Shutdown()
+	server := &MCPServer{store: store}
+
+	// Test confirm_importance prompt
+	params := json.RawMessage(`{
+		"name": "confirm_importance",
+		"arguments": {
+			"memory_content": "User likes badminton",
+			"suggested_importance": 0.7
+		}
+	}`)
+
+	msg := MCPMessage{
+		Jsonrpc: "2.0",
+		ID:      9,
+		Method:  "prompts/get",
+		Params:  params,
+	}
+
+	response := server.handleMessage(msg)
+
+	if response.Error != nil {
+		t.Fatalf("Expected no error, got %v", response.Error)
+	}
+
+	result, ok := response.Result.(ElicitationResponse)
+	if !ok {
+		t.Fatal("Response result is not ElicitationResponse")
+	}
+
+	if len(result.Messages) != 1 {
+		t.Errorf("Expected 1 message, got %d", len(result.Messages))
+	}
+
+	if result.Messages[0].Role != "user" {
+		t.Errorf("Expected role 'user', got %s", result.Messages[0].Role)
+	}
+
+	if result.Messages[0].Content.Type != "text" {
+		t.Errorf("Expected content type 'text', got %s", result.Messages[0].Content.Type)
+	}
+
+	// Verify the message contains expected content
+	if !contains(result.Messages[0].Content.Text, "badminton") {
+		t.Error("Message should contain memory content")
+	}
+}
+
+// Test invalid prompt name
+func TestInvalidPromptName(t *testing.T) {
+	store := NewMemoryStore(10)
+	defer store.Shutdown()
+	server := &MCPServer{store: store}
+
+	params := json.RawMessage(`{
+		"name": "non_existent_prompt",
+		"arguments": {}
+	}`)
+
+	msg := MCPMessage{
+		Jsonrpc: "2.0",
+		ID:      10,
+		Method:  "prompts/get",
+		Params:  params,
+	}
+
+	response := server.handleMessage(msg)
+
+	if response.Error == nil {
+		t.Error("Expected error for invalid prompt, got nil")
+	}
+
 	if response.Error.Code != -32602 {
 		t.Errorf("Expected error code -32602, got %d", response.Error.Code)
 	}
